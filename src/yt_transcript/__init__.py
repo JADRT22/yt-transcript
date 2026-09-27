@@ -1,3 +1,3 @@
-"""yt-transcript: busca a transcrição de vídeos do YouTube para agentes de IA."""
+"""yt-transcript: fetch YouTube video transcripts for AI agents."""
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"

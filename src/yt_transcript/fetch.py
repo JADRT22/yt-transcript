@@ -1,7 +1,7 @@
-"""Busca de transcrições de vídeos do YouTube.
+"""Fetch transcripts of YouTube videos.
 
-Fluxo principal usa `youtube-transcript-api` (sem chave de API). Se falhar
-(vídeo bloqueado, API mudou, etc.), tenta `yt-dlp` como fallback.
+The primary path uses `youtube-transcript-api` (no API key required). If it
+fails (blocked video, changed API, etc.), it falls back to `yt-dlp`.
 """
 
 from __future__ import annotations
@@ -16,39 +16,42 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-# Padrões de URL do YouTube que carregam um vídeo (watch, shorts, embed, live)
+# URL patterns that carry a video (watch, shorts, embed, live)
 _VIDEO_ID_RE = re.compile(r"^[A-Za-z0-9_-]{11}$")
 _URL_PATTERNS = (
     re.compile(r"(?:youtube\.com/(?:watch\?(?:.*&)?v=|shorts/|live/|embed/)|youtu\.be/)([A-Za-z0-9_-]{11})"),
 )
 
+# Default language preference for transcripts (tried in order).
+DEFAULT_LANGUAGES = ["en", "es", "pt"]
+
 
 @dataclass
 class TranscriptResult:
-    """Transcrição de um vídeo, pronta para consumo por um modelo."""
+    """Transcript of a video, ready for consumption by a model."""
 
     video_id: str
     language: str
     language_code: str
     is_generated: bool
     text: str
-    source: str  # "youtube-transcript-api" ou "yt-dlp"
+    source: str  # "youtube-transcript-api" or "yt-dlp (...)"
 
     def as_text(self) -> str:
         header = (
-            f"Transcrição de https://youtu.be/{self.video_id}\n"
-            f"Idioma: {self.language} ({self.language_code})"
-            f"{' [gerada automaticamente]' if self.is_generated else ''}\n\n"
+            f"Transcript for https://youtu.be/{self.video_id}\n"
+            f"Language: {self.language} ({self.language_code})"
+            f"{' [auto-generated]' if self.is_generated else ''}\n\n"
         )
         return header + self.text
 
 
 class TranscriptError(Exception):
-    """Erro amigável ao buscar transcrição."""
+    """Friendly error while fetching a transcript."""
 
 
 def extract_video_id(source: str) -> str:
-    """Aceita URL completa, URL curta (youtu.be) ou o ID de 11 caracteres direto."""
+    """Accepts a full URL, a short URL (youtu.be) or a bare 11-char video ID."""
     source = source.strip()
     if _VIDEO_ID_RE.match(source):
         return source
@@ -58,7 +61,7 @@ def extract_video_id(source: str) -> str:
         if match:
             return match.group(1)
 
-    # watch?v=... pode ter vindo sem o domínio casar acima (ex.: com proxy/params estranhos)
+    # watch?v=... may arrive without a matching domain above (proxies, odd params)
     try:
         parsed = urlparse(source)
         query_v = parse_qs(parsed.query).get("v", [None])[0]  # type: ignore[list-item]
@@ -68,13 +71,13 @@ def extract_video_id(source: str) -> str:
         pass
 
     raise TranscriptError(
-        f"Não consegui extrair o ID do vídeo de: {source!r}. "
-        "Use uma URL do YouTube (youtube.com/watch?v=..., youtu.be/..., shorts/...) ou o ID de 11 caracteres."
+        f"Could not extract the video ID from: {source!r}. "
+        "Use a YouTube URL (youtube.com/watch?v=..., youtu.be/..., shorts/...) or the 11-character ID."
     )
 
 
 def _join_segments(segments) -> str:
-    """Junta os segmentos de legenda em um texto corrido único."""
+    """Join caption segments into a single running text."""
     parts: list[str] = []
     for seg in segments:
         text = seg.text.replace("\n", " ").strip()
@@ -90,7 +93,7 @@ def _fetch_via_api(video_id: str, languages: list[str]) -> TranscriptResult:
     fetched = api.fetch(video_id, languages=languages)
     snippets = list(fetched)
     if not snippets:
-        raise TranscriptError("A transcrição veio vazia.")
+        raise TranscriptError("The transcript came back empty.")
 
     return TranscriptResult(
         video_id=video_id,
@@ -102,13 +105,13 @@ def _fetch_via_api(video_id: str, languages: list[str]) -> TranscriptResult:
     )
 
 
-# Navegador de onde extrair cookies como último recurso contra bloqueio de IP.
-# Use YT_TRANSCRIPT_COOKIES_BROWSER=none para desativar (ou chrome, chromium, brave...).
+# Browser to pull cookies from as a last resort against IP blocks.
+# Set YT_TRANSCRIPT_COOKIES_BROWSER=none to disable (or chrome, chromium, brave...).
 _COOKIES_BROWSER = os.environ.get("YT_TRANSCRIPT_COOKIES_BROWSER", "firefox")
 
-# Cache em disco (~/.cache/yt-transcript): evita re-bater no YouTube quando o
-# mesmo vídeo é pedido de novo — importante por causa dos rate limits.
-# Use YT_TRANSCRIPT_CACHE=none para desativar.
+# On-disk cache (~/.cache/yt-transcript): avoids hitting YouTube again when the
+# same video is requested twice — important because of rate limits.
+# Set YT_TRANSCRIPT_CACHE=none to disable.
 _CACHE_DIR = os.environ.get("YT_TRANSCRIPT_CACHE", "")
 _CACHE_DISABLED = _CACHE_DIR.lower() == "none"
 _CACHE_DIR_PATH = Path(_CACHE_DIR) if _CACHE_DIR else Path.home() / ".cache" / "yt-transcript"
@@ -132,7 +135,7 @@ def _cache_set(key: str, value) -> None:
             json.dumps(value, ensure_ascii=False), encoding="utf-8"
         )
     except OSError:
-        pass  # cache é best-effort; nunca quebra a busca
+        pass  # cache is best-effort; it must never break a fetch
 
 
 def _cache_key(*parts) -> str:
@@ -143,12 +146,12 @@ def _cache_key(*parts) -> str:
 def _ytdlp_run(
     extra_args: list[str], timeout: int, allow_cookies: bool = False
 ) -> subprocess.CompletedProcess:
-    """Roda yt-dlp em cascata de contornos anti-bloqueio do YouTube:
+    """Run yt-dlp through a cascade of YouTube anti-block workarounds:
 
-    1. client padrão (web)
-    2. client android (bypassa a checagem "confirm you're not a bot")
-    3. cookies do navegador + --ignore-no-formats-error (cura bloqueio de IP/429;
-       --ignore-no-formats-error evita o erro de formatos vazios de sessão logada)
+    1. default client (web)
+    2. android client (bypasses the "confirm you're not a bot" check)
+    3. browser cookies + --ignore-no-formats-error (cures IP blocks/429s;
+       --ignore-no-formats-error avoids the empty-format error of logged sessions)
     """
     base = [sys.executable, "-m", "yt_dlp", "--skip-download", "--no-warnings"]
     attempts: list[list[str]] = [
@@ -177,12 +180,12 @@ def _ytdlp_run(
         last_err = lines[-1] if lines else ""
     suffix = " (incl. cookies)" if used_cookies else ""
     raise TranscriptError(
-        f"yt-dlp falhou em todas as tentativas{suffix}. Detalhe: {last_err or 'sem saída'}"
+        f"yt-dlp failed on all attempts{suffix}. Detail: {last_err or 'no output'}"
     )
 
 
 def _client_combos() -> list[tuple[str, list[str]]]:
-    """Combinações (nome, argumentos extras) de player client/cookies, em ordem."""
+    """(name, extra args) player client/cookie combinations, in order."""
     combos = [
         ("web", []),
         ("android", ["--extractor-args", "youtube:player_client=android"]),
@@ -203,13 +206,12 @@ def _client_combos() -> list[tuple[str, list[str]]]:
 
 
 def _fetch_via_ytdlp(video_id: str, languages: list[str]) -> TranscriptResult:
-    """Fallback: baixa a legenda auto/manual com yt-dlp e converte pra texto puro.
+    """Fallback: download auto/manual captions via yt-dlp and convert to plain text.
 
-    Tenta várias combinações de player client e cookies; sucesso só se o .vtt
-    for realmente gravado (cada combo falha de um jeito diferente).
+    Tries several player client + cookie combinations; success only counts if
+    the .vtt file is actually written (each combo fails differently).
     """
     import tempfile
-    from pathlib import Path
 
     lang_codes = ",".join(languages)
     url = f"https://www.youtube.com/watch?v={video_id}"
@@ -220,8 +222,8 @@ def _fetch_via_ytdlp(video_id: str, languages: list[str]) -> TranscriptResult:
         for name, combo_args in _client_combos():
             cmd = [
                 sys.executable, "-m", "yt_dlp", "--no-warnings",
-                # --no-simulate é obrigatório: sem ele o yt-dlp roda em modo
-                # simulação e NÃO grava os arquivos de legenda.
+                # --no-simulate is mandatory: without it yt-dlp runs in simulation
+                # mode and does NOT write caption files.
                 "--no-simulate", "--skip-download",
                 "--write-auto-subs", "--write-subs",
                 "--sub-langs", lang_codes,
@@ -246,33 +248,33 @@ def _fetch_via_ytdlp(video_id: str, languages: list[str]) -> TranscriptResult:
                 if text:
                     return TranscriptResult(
                         video_id=video_id,
-                        language="yt-dlp (idioma não informado)",
-                        language_code=languages[0] if languages else "pt",
+                        language="Unknown (via yt-dlp)",
+                        language_code=languages[0] if languages else "en",
                         is_generated=True,
                         text=text,
                         source=f"yt-dlp ({name})",
                     )
 
             lines = (proc.stderr or "").strip().splitlines()
-            detail = lines[-1] if lines else "sem saída"
+            detail = lines[-1] if lines else "no output"
             if proc.returncode == 0:
                 clean_no_subs = True
-                errors.append(f"{name}: ok, mas sem legenda nos idiomas {lang_codes}")
+                errors.append(f"{name}: ok, but no captions in languages {lang_codes}")
             else:
                 errors.append(f"{name}: {detail}")
 
     if clean_no_subs:
         raise TranscriptError(
-            f"Este vídeo não tem legendas nos idiomas tentados ({lang_codes}). "
-            "Tente outros idiomas com -l/--languages."
+            f"This video has no captions in the attempted languages ({lang_codes}). "
+            "Try other languages with -l/--languages."
         )
     raise TranscriptError(
-        "yt-dlp não conseguiu baixar legendas. Tentativas:\n- " + "\n- ".join(errors)
+        "yt-dlp could not download captions. Attempts:\n- " + "\n- ".join(errors)
     )
 
 
 def _vtt_to_text(vtt: str) -> str:
-    """Converte WebVTT em texto corrido, removendo cabeçalhos, tempos e tags."""
+    """Convert WebVTT to running text, stripping headers, timings and tags."""
     lines_out: list[str] = []
     seen: set[str] = set()
     for raw_line in vtt.splitlines():
@@ -285,8 +287,8 @@ def _vtt_to_text(vtt: str) -> str:
             or line.isdigit()
         ):
             continue
-        line = re.sub(r"<[^>]+>", "", line)  # tags <c>, <00:00:00.000> etc.
-        if line in seen:  # legendas em scroll repetem a linha anterior
+        line = re.sub(r"<[^>]+>", "", line)  # <c>, <00:00:00.000> etc. tags
+        if line in seen:  # scrolling captions repeat the previous line
             continue
         seen.add(line)
         lines_out.append(line)
@@ -294,11 +296,11 @@ def _vtt_to_text(vtt: str) -> str:
 
 
 def get_transcript(source: str, languages: list[str] | None = None) -> TranscriptResult:
-    """Busca a transcrição de um vídeo a partir de URL ou ID (com cache em disco).
+    """Fetch the transcript of a video from a URL or ID (cached on disk).
 
-    Tenta a API de legendas primeiro; se não der, cai para o yt-dlp.
+    Tries the captions API first; on failure, falls back to yt-dlp.
     """
-    languages = languages or ["pt", "pt-BR", "en"]
+    languages = languages or DEFAULT_LANGUAGES
     video_id = extract_video_id(source)
 
     cache_key = _cache_key("transcript", video_id, ",".join(languages))
@@ -313,7 +315,7 @@ def get_transcript(source: str, languages: list[str] | None = None) -> Transcrip
             result = _fetch_via_ytdlp(video_id, languages)
         except Exception as ytdlp_err:
             raise TranscriptError(
-                f"Não foi possível obter a transcrição de {video_id}.\n"
+                f"Could not retrieve the transcript for {video_id}.\n"
                 f"- youtube-transcript-api: {api_err}\n"
                 f"- yt-dlp: {ytdlp_err}"
             ) from ytdlp_err
@@ -323,7 +325,7 @@ def get_transcript(source: str, languages: list[str] | None = None) -> Transcrip
 
 
 def get_video_info(source: str) -> dict:
-    """Metadados leves do vídeo (título, canal, duração) via yt-dlp (com cache)."""
+    """Lightweight video metadata (title, channel, duration) via yt-dlp (cached)."""
     video_id = extract_video_id(source)
 
     cache_key = _cache_key("info", video_id)
@@ -343,7 +345,7 @@ def get_video_info(source: str) -> dict:
     )
     title, channel, duration, upload_date = (proc.stdout.strip().split("|||") + ["", "", "", ""])[:4]
     if not title:
-        raise TranscriptError(f"yt-dlp não retornou metadados de {video_id}.")
+        raise TranscriptError(f"yt-dlp returned no metadata for {video_id}.")
     info = {
         "video_id": video_id,
         "url": url,
@@ -357,9 +359,9 @@ def get_video_info(source: str) -> dict:
 
 
 def list_available_transcripts(source: str) -> list[dict]:
-    """Lista idiomas/legendas disponíveis para o vídeo.
+    """List the captions/transcripts available for a video.
 
-    Tenta a API de legendas; se o YouTube bloquear, cai para o yt-dlp.
+    Tries the captions API first; if YouTube blocks it, falls back to yt-dlp.
     """
     video_id = extract_video_id(source)
     cache_key = _cache_key("list", video_id)
@@ -381,7 +383,7 @@ def list_available_transcripts(source: str) -> list[dict]:
         _cache_set(cache_key, items)
         return items
     except Exception:
-        pass  # cai para o yt-dlp abaixo
+        pass  # fall through to yt-dlp below
 
     url = f"https://www.youtube.com/watch?v={video_id}"
     proc = _ytdlp_run(["--list-subs", "--no-playlist", url], timeout=90, allow_cookies=True)
@@ -417,11 +419,11 @@ def list_available_transcripts(source: str) -> list[dict]:
 def get_video_details(
     source: str, max_comments: int = 50, comment_sort: str = "top"
 ) -> dict:
-    """Descrição e comentários do vídeo, além dos metadados básicos.
+    """Video description and comments, plus the basic metadata.
 
-    Usa yt-dlp --dump-json com --write-comments, tentando a mesma cascata de
-    clients. Nem todo client entrega comentários: se um combo retornar ok
-    sem comentários, segue para o próximo.
+    Uses yt-dlp --dump-json with --write-comments, trying the same client
+    cascade. Not every client delivers comments: if a combo succeeds without
+    any, move on to the next one.
     """
     video_id = extract_video_id(source)
     cache_key = _cache_key("details", video_id, max_comments, comment_sort)
@@ -473,9 +475,9 @@ def get_video_details(
                 for c in (info.get("comments") or [])
             ]
             if not comments and max_comments > 0:
-                # Client conectou, mas não entrega comentários (ex.: android).
+                # Client connected but delivers no comments (e.g. android).
                 info_no_comments = info
-                errors.append(f"{name}: ok, mas 0 comentários")
+                errors.append(f"{name}: ok, but 0 comments")
                 continue
             details = {
                 "video_id": video_id,
@@ -492,10 +494,10 @@ def get_video_details(
             return details
 
         lines = (proc.stderr or "").strip().splitlines()
-        errors.append(f"{name}: {lines[-1] if lines else 'sem saída'}")
+        errors.append(f"{name}: {lines[-1] if lines else 'no output'}")
 
     if info_no_comments is not None:
-        # Vídeo provavelmente tem comentários desativados; devolve o resto.
+        # Comments are probably disabled for this video; return the rest.
         details = {
             "video_id": video_id,
             "url": url,
@@ -505,12 +507,12 @@ def get_video_details(
             "description": (info_no_comments.get("description") or "").strip(),
             "comment_count": info_no_comments.get("comment_count"),
             "comments": [],
-            "source": "yt-dlp (sem comentários)",
+            "source": "yt-dlp (no comments)",
         }
         _cache_set(cache_key, details)
         return details
     raise TranscriptError(
-        "Não foi possível obter descrição/comentários. Tentativas:\n- " + "\n- ".join(errors)
+        "Could not fetch description/comments. Attempts:\n- " + "\n- ".join(errors)
     )
 
 
