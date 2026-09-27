@@ -1,0 +1,7 @@
+{
+  "mcpServers": {
+    "yt-transcript": {
+      "command": "/home/fernando/yt-transcript/.venv/bin/yt-transcript-mcp"
+    }
+  }
+}
