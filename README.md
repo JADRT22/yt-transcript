@@ -156,4 +156,4 @@ To force a fresh fetch for one video, delete its file (SHA-256-named) from the c
 
 ## License
 
-MIT
+[MIT](LICENSE) © 2026 JADRT22
