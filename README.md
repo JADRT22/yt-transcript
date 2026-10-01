@@ -1,6 +1,18 @@
-# yt-transcript
+# yt-transcript — YouTube Transcript MCP Server
 
-Give your AI agent **eyes for YouTube**. A lightweight [MCP](https://modelcontextprotocol.io) server + CLI that fetches the **transcript, description, and comments** of any YouTube video — so your agent can read, summarize, and analyze video content.
+Give your AI agent **eyes for YouTube**. A lightweight youtube transcript mcp server + CLI that fetches the **transcript, description, and comments** of any YouTube video — so your agent can read, summarize, and analyze video content.
+
+## ⚡ Copie e rode em 30s / Copy-paste in 30s
+
+```bash
+git clone https://github.com/JADRT22/yt-transcript.git
+cd yt-transcript
+python3 -m venv .venv
+.venv/bin/pip install -e .
+.venv/bin/yt-transcript "https://www.youtube.com/watch?v=VIDEO_ID"
+```
+
+> 🇧🇷 **Em Português:** servidor MCP + CLI de transcrição do YouTube (youtube transcript mcp server) — busca transcrição, descrição e comentários de qualquer vídeo para seu agente resumir e analisar, com cache em disco e fallback em 4 camadas contra bloqueio do YouTube.
 
 Works with **opencode, Claude Code, Freebuff, Cursor, and any MCP-compatible client** — or as a plain CLI any agent can call.
 
