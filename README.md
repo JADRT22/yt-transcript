@@ -2,7 +2,7 @@
 
 Give your AI agent **eyes for YouTube**. A lightweight youtube transcript mcp server + CLI that fetches the **transcript, description, and comments** of any YouTube video — so your agent can read, summarize, and analyze video content.
 
-## ⚡ Copie e rode em 30s / Copy-paste in 30s
+## Copy-paste in 30s / Copie e rode em 30s
 
 ```bash
 git clone https://github.com/JADRT22/yt-transcript.git
