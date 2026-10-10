@@ -25,9 +25,11 @@ mcp = FastMCP(
         "Tools for reading the transcript (captions) of YouTube videos. "
         "Accepts a full URL, youtu.be, shorts or the 11-character ID. "
         "Use get_transcript_tool to get the video text and summarize/analyze it; "
-        "use list_transcripts_tool to see which languages are available and "
-        "get_video_info_tool for title/channel/duration. Use get_video_details_tool "
-        "for the full description and audience comments."
+        "use list_transcripts_tool to see which languages are available; "
+        "use get_video_info_tool for just the header facts (title, channel, "
+        "duration). Use get_video_details_tool when you need the description or "
+        "audience comments — it returns those same header fields plus both, so "
+        "never call get_video_info_tool alongside it for the same reason."
     ),
 )
 
@@ -75,7 +77,19 @@ def list_transcripts_tool(url: str) -> str:
 
 @mcp.tool()
 def get_video_info_tool(url: str) -> str:
-    """Returns video metadata: title, channel, duration and upload date."""
+    """Returns basic video metadata: title, channel, duration and upload date.
+
+    Use this when you only need the header facts, or to check a video is
+    reachable — it is the cheapest call in this server. For the description and
+    audience comments, use get_video_details_tool instead: it returns these same
+    fields plus both, so never call the two for the same reason.
+
+    Args:
+        url: Video URL (youtube.com/watch?v=..., youtu.be/..., shorts/...) or ID.
+
+    Returns:
+        JSON with title, channel, duration and upload date, or an error message.
+    """
     try:
         info = get_video_info(url)
     except TranscriptError as e:
@@ -87,13 +101,17 @@ def get_video_info_tool(url: str) -> str:
 
 @mcp.tool()
 def get_video_details_tool(url: str, max_comments: int = 50) -> str:
-    """Returns title, channel, duration, FULL description and comments of a video.
+    """Returns title, channel, duration, the FULL description and comments of a video.
 
-    Useful for understanding context, mentioned links and audience reception.
+    This is a superset of get_video_info_tool — it returns every field that tool
+    gives you, plus the description text and audience comments. Prefer this one
+    when you need context, links mentioned in the description, or audience
+    reception; prefer get_video_info_tool when you only need the basics and want
+    the fastest response.
 
     Args:
-        url: Video URL or ID.
-        max_comments: maximum number of comments (default 50).
+        url: Video URL (youtube.com/watch?v=..., youtu.be/..., shorts/...) or ID.
+        max_comments: maximum number of comments to return (default 50).
 
     Returns:
         JSON with description and a comments list (author, text, likes).

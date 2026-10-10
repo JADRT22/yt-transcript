@@ -109,8 +109,12 @@ Any agent that runs shell commands can read the output directly:
 |---|---|
 | `get_transcript_tool(url, languages?)` | Full transcript of the video |
 | `list_transcripts_tool(url)` | Available captions (languages, auto-generated?) |
-| `get_video_info_tool(url)` | Title, channel, duration, upload date |
+| `get_video_info_tool(url)` | Header facts only: title, channel, duration, upload date |
 | `get_video_details_tool(url, max_comments?)` | **Full description + comments** (author, text, likes) |
+
+`get_video_details_tool` is a superset of `get_video_info_tool` — it returns
+those same header fields plus the description and comments. Use
+`get_video_info_tool` when you just need the basics and want the fastest call.
 
 Example prompts once connected:
 
